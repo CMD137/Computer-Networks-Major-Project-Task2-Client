@@ -24,7 +24,7 @@ public class GBN {
     private InetAddress serverIP;
     private int serverPort;
 
-    //锁对象，控制left, right，acked[]。
+    //锁对象，控制left, right，acked[],sendTimes
     private final Object lock = new Object();
 
     private int clientSeq = 0;
@@ -65,6 +65,7 @@ public class GBN {
                 dataList.add(content);
                 tempTotalLength-=mss;
 
+                //test
                 //System.out.println(temp+"::::::"+content);
             }else{
                 String content=data.substring(0,tempTotalLength);
@@ -115,9 +116,10 @@ public class GBN {
 
             //数据传输阶段
             System.out.println("连接建立成功，进入数据传输阶段");
-            //开启监听线程
 
             acked=new boolean[dataList.size()];
+
+            //开启监听线程
             new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -127,17 +129,20 @@ public class GBN {
                             Message ackMsg = Message.deserialize(receivePacket.getData());
 
                             int ackSeq = ackMsg.getAckNum(); //累计确认
-                            //向上取整，最后面有个4，不然left没往前移动
-                            int ackIndex = (ackSeq + mss - 1) / mss;
+                            int nextIndex = (ackSeq + mss - 1) / mss;//向上取整，最后面有个4，不然left没往前移动
 
-                            System.out.println("收到:\n"+ackMsg+"\t此时:ackSeq="+ackSeq+"\tackIndex="+ackIndex);
+                            //test
+                            //System.out.println("收到:\n"+ackMsg+"\t此时:ackSeq="+ackSeq+"\t nextIndex="+nextIndex);
 
                             synchronized (lock) {
+                                long now = System.currentTimeMillis();
+                                System.out.println("第"+(nextIndex)+"个包已收到：第"+(ackSeq-dataList.get(nextIndex-1).length()+1)+"到第"+ackSeq+"个字节，RTT："+ (now-sendTimes.get(nextIndex - 1)) +"ms");
+
                                 //注意这里是i < ackIndex而非<=,我debug了半天我草
-                                for (int i = left; i < ackIndex && i < acked.length; i++) {
+                                for (int i = left; i < nextIndex && i < acked.length; i++) {
                                     acked[i] = true;
                                 }
-                                left = ackIndex; // 滑动窗口左边界右移
+                                left = nextIndex; // 滑动窗口左边界右移
                             }
                         } catch (Exception e) {
                             e.printStackTrace();
@@ -171,11 +176,14 @@ public class GBN {
                     long now = System.currentTimeMillis();
                     // 处理超时重传
                     if (!acked[left]&&(now-sendTimes.get(left))>timeoutTime){
+                        //test
                         System.out.println("第"+left+"条信息触发超时重传：left:"+left+"right:"+right);
 
                         for (int i = left; i < right; i++) {
                             sendSegment(i);
                             sendTimes.set(i, now); //重传，刷新记录的时间
+                            //temp
+                            //System.out.println("设置第"+i+"个信息的时间："+now);
                         }
                     }
 
@@ -183,6 +191,8 @@ public class GBN {
                     while (right - left < 5 && right < dataList.size()) {
                         sendSegment(right);
                         sendTimes.set(right,System.currentTimeMillis());
+                        //temp
+                        //System.out.println("设置第"+right+"个信息的时间："+System.currentTimeMillis());
                         right++;
                     }
                 }
@@ -190,7 +200,11 @@ public class GBN {
                 Thread.sleep(10);
             }
 
-            System.out.println("传输阶段结束！left="+left+"\tright="+right);
+
+            System.out.println("传输阶段结束");
+
+            //test
+            //System.out.println("left="+left+"\tright="+right);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -203,7 +217,7 @@ public class GBN {
         byte[] msgBytes = msg.serialize();
         DatagramPacket packet = new DatagramPacket(msgBytes, msgBytes.length, serverIP, serverPort);
         socket.send(packet);
-        System.out.println("发送"+msg);
+        System.out.println("发送出第"+(index+1)+"个包：第"+clientSeq+"到第"+(clientSeq+msg.getData().length()-1)+"个字节");
     }
 
 }
