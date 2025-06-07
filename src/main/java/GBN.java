@@ -13,7 +13,7 @@ public class GBN {
     private int windowSize = 400;
 
     /*窗口左右边界，实际为messageList的下标，与serverACK的变换规则如下：
-    left=serverACK%80;
+    收到的下标序号=serverACK%80;
     */
     private int left;
     private int right;
@@ -21,6 +21,9 @@ public class GBN {
     private int timeoutTime=300;
     private InetAddress serverIP;
     private int serverPort;
+
+    //锁对象，控制left, right，acked[]。
+    private final Object lock = new Object();
 
     public GBN(String data,String serverIP,int serverPort){
         this.data = data;
@@ -92,17 +95,51 @@ public class GBN {
             socket.send(ackPacket);
             System.out.println("发送第三次次握手"+ackMsg);
 
+            //数据传输阶段
+            System.out.println("连接建立成功，进入数据传输阶段");
+            //开启监听线程
+            boolean[] acked=new boolean[dataList.size()];
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    while (true){
+                        try {
+                            socket.receive(receivePacket);
+                            Message ackMsg = Message.deserialize(ackPacket.getData());
+
+                            int ackSeq = ackMsg.getAckNum(); //累计确认
+                            int ackIndex = ackSeq % mss;
+
+                            synchronized (lock) {
+                                for (int i = left; i <= ackIndex && i < acked.length; i++) {
+                                    acked[i] = true;
+                                }
+                                left = ackIndex + 1; // 滑动窗口左边界
+                                lock.notifyAll(); // 通知发送线程
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            }).start();
+
+            //开始发送（主线程即为发送线程）
+
+
+
+
+
+
+
         } catch (Exception e) {
             e.printStackTrace();
             return;
         }
 
-        //数据传输阶段
-        System.out.println("连接建立成功，进入数据传输阶段");
 
-        //开启监听线程
 
-        //开启发送线程
 
 
     }
