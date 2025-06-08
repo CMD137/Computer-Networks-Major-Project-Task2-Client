@@ -1,44 +1,54 @@
 import java.io.IOException;
 import java.net.*;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 public class GBN {
     //原始数据
     private String data;
+    private List<String> dataList;
 
-    //segment大小固定为80
-    private int mss = 80;
-    //窗口大小固定为400
-    private int windowSize = 400;
-
-    /*窗口左右边界，实际为messageList的下标，与serverACK的变换规则如下：
-    收到的下标序号=serverACK%80;
-    */
-    private int left=0;
-    private int right=0;
-    //超时时间初始值设定为300，后续动态更新
-    private int timeoutTime=300;
+    //连接相关变量：
     private InetAddress serverIP;
     private int serverPort;
-
-    //锁对象，控制left, right，acked[],sendTimes
-    private final Object lock = new Object();
+    private DatagramSocket socket;
 
     private int clientSeq = 0;
     private int clientAck;
 
-    private DatagramSocket socket;
+    //滑动窗口相关变量：
+    //segment大小固定为80
+    private int mss = 80;
+    //窗口大小固定为400
+    private int windowSize = 400;
+    //窗口左右边界，实际为messageList的下标
+    private int left=0;
+    private int right=0;
 
-    private List<String> dataList;
-
+    //控制重发相关信号
+    //锁对象，控制left, right，acked[],sendTimes
+    private final Object lock = new Object();
     //记录已经确认过的消息，下标同dataList
     boolean[] acked;
-
     //记录窗口内信息发送时间，下标同acked
     private List<Long> sendTimes;
+
+    //动态超时时间相关变量
+    //初始超时时间:
+    private int estimatedRTT=100;
+    //超时时间
+    private int timeoutInterval =estimatedRTT;
+    //偏差，初始设置为estimatedRTT/2
+    private int devRTT=estimatedRTT/2;
+    //两个参数
+    private double alphaRtt=0.125;
+    private double betaRtt=0.125;
+    /*
+    EstimatedRTT = (1 - α) * EstimatedRTT + α * SampleRTT
+    DevRTT = (1 - β) * DevRTT + β * |SampleRTT - EstimatedRTT|
+    TimeoutInterval = EstimatedRTT + 4 * DevRTT
+    */
+
 
     public GBN(String data,String serverIP,int serverPort){
         this.data = data;
@@ -133,12 +143,21 @@ public class GBN {
 
                             //test
                             //System.out.println("收到:\n"+ackMsg+"\t此时:ackSeq="+ackSeq+"\t nextIndex="+nextIndex);
-
+                            long now = System.currentTimeMillis();
                             synchronized (lock) {
-                                long now = System.currentTimeMillis();
-                                System.out.println("第"+(nextIndex)+"个包已收到：第"+(ackSeq-dataList.get(nextIndex-1).length()+1)+"到第"+ackSeq+"个字节，RTT："+ (now-sendTimes.get(nextIndex - 1)) +"ms");
 
-                                //注意这里是i < ackIndex而非<=,我debug了半天我草
+                                //每收到一个ACK，动态计算timeoutInterval
+                                int sampleRtt= (int) (now-sendTimes.get(nextIndex - 1));
+                                estimatedRTT = (int) ((1 - alphaRtt) * estimatedRTT + alphaRtt * sampleRtt);
+                                devRTT = (int) ((1 - betaRtt) * devRTT + betaRtt * Math.abs(sampleRtt - estimatedRTT));
+                                timeoutInterval=estimatedRTT + 4 * devRTT;
+
+                                //temp
+                                System.out.println("timeoutInterval更新为："+timeoutInterval);
+
+                                System.out.println("第"+(nextIndex)+"个包已收到：第"+(ackSeq-dataList.get(nextIndex-1).length()+1)+"到第"+ackSeq+"个字节，RTT："+ sampleRtt +"ms");
+
+                                //注意这里是i < ackIndex而非<=,我debug了半天
                                 for (int i = left; i < nextIndex && i < acked.length; i++) {
                                     acked[i] = true;
                                 }
@@ -175,11 +194,12 @@ public class GBN {
                 synchronized (lock) {
                     long now = System.currentTimeMillis();
                     // 处理超时重传
-                    if (!acked[left]&&(now-sendTimes.get(left))>timeoutTime){
+                    if (!acked[left]&&(now-sendTimes.get(left))> timeoutInterval){
                         //test
-                        System.out.println("第"+left+"条信息触发超时重传：left:"+left+"right:"+right);
+                        //System.out.println("第"+left+"条信息触发超时重传：left:"+left+"right:"+right);
 
                         for (int i = left; i < right; i++) {
+                            System.out.print("重传:");
                             sendSegment(i);
                             sendTimes.set(i, now); //重传，刷新记录的时间
                             //temp
@@ -188,7 +208,7 @@ public class GBN {
                     }
 
                     // 发送新包（窗口未满）
-                    while (right - left < 5 && right < dataList.size()) {
+                    while (right - left < windowSize/mss && right < dataList.size()) {
                         sendSegment(right);
                         sendTimes.set(right,System.currentTimeMillis());
                         //temp
