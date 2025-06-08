@@ -49,6 +49,9 @@ public class GBN {
     TimeoutInterval = EstimatedRTT + 4 * DevRTT
     */
 
+    //记录每次的sampleRTT，用于最后的统计。
+    List<Integer>  RTTList;
+
 
     public GBN(String data,String serverIP,int serverPort){
         this.data = data;
@@ -125,9 +128,16 @@ public class GBN {
             System.out.println("发送第三次次握手"+ackMsg);
 
             //数据传输阶段
-            System.out.println("连接建立成功，进入数据传输阶段");
+            System.out.println("------------------------------------连接建立成功，进入数据传输阶段------------------------------------");
 
             acked=new boolean[dataList.size()];
+            RTTList=new ArrayList<>(dataList.size());
+            sendTimes=new ArrayList<>(dataList.size());
+            //初始化下
+            for (int i = 0; i < dataList.size(); i++) {
+                sendTimes.add(0L);
+            }
+
 
             //开启监听线程
             new Thread(new Runnable() {
@@ -152,8 +162,9 @@ public class GBN {
                                 devRTT = (int) ((1 - betaRtt) * devRTT + betaRtt * Math.abs(sampleRtt - estimatedRTT));
                                 timeoutInterval=estimatedRTT + 4 * devRTT;
 
+                                RTTList.add(sampleRtt);
                                 //temp
-                                System.out.println("timeoutInterval更新为："+timeoutInterval);
+                                //System.out.println("timeoutInterval更新为："+timeoutInterval);
 
                                 System.out.println("第"+(nextIndex)+"个包已收到：第"+(ackSeq-dataList.get(nextIndex-1).length()+1)+"到第"+ackSeq+"个字节，RTT："+ sampleRtt +"ms");
 
@@ -171,14 +182,6 @@ public class GBN {
             }).start();
 
             //开始发送（主线程即为发送线程）
-
-            sendTimes=new ArrayList<>(dataList.size());
-            //初始化下
-            for (int i = 0; i < dataList.size(); i++) {
-                sendTimes.add(0L);
-            }
-
-
             while (left < dataList.size()) {
 
                 /*
@@ -220,11 +223,46 @@ public class GBN {
                 Thread.sleep(10);
             }
 
-
-            System.out.println("传输阶段结束");
-
             //test
             //System.out.println("left="+left+"\tright="+right);
+            System.out.println("------------------------------------传输阶段结束，计算RTT相关统计量------------------------------------");
+
+            // 最大值
+            int maxRTT = Integer.MIN_VALUE;
+            for (int value : RTTList) {
+                if (value > maxRTT) {
+                    maxRTT = value;
+                }
+            }
+            System.out.println("RTT最大值：" + maxRTT);
+
+            // 最小值
+            int minRTT = Integer.MAX_VALUE;
+            for (int value : RTTList) {
+                if (value < minRTT) {
+                    minRTT = value;
+                }
+            }
+            System.out.println("RTT最小值：" + minRTT);
+
+            // 平均值
+            int sum = 0;
+            for (int value : RTTList) {
+                sum += value;
+            }
+            double average = (double) sum / RTTList.size();
+            System.out.println("RTT平均值：" + average);
+
+            // 标准差
+            double varianceSum = 0;
+            for (int value : RTTList) {
+                varianceSum += Math.pow(value - average, 2);
+            }
+            double variance = varianceSum / RTTList.size();
+            double standardDeviation = Math.sqrt(variance);
+            System.out.println("RTT标准差：" + standardDeviation);
+
+            System.out.println("------------------------------------结束------------------------------------");
 
         } catch (Exception e) {
             e.printStackTrace();
