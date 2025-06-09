@@ -97,7 +97,7 @@ public class GBN {
 
         try {
             socket = new DatagramSocket();
-            System.out.println("UDP server 已启动");
+            System.out.println("task2 client 已启动");
 
 
 
